@@ -1,8 +1,8 @@
 // VIS live crowd: the camera. Runs on the phone on the balcony.
 // Streams the camera to the "VIS Live Crowd" Roboflow workflow (RF-DETR + ByteTrack) over WebRTC, maps each
 // person's feet onto the seat map using the four calibration chairs, and sends only those positions to the display.
-import { InferenceHTTPClient, webrtc } from './vendor/inference-sdk-0.4.0.js?v=8';
-import { peerIdFor, WORKFLOW_SPEC, PROXY_URL, CORNERS, UNIT, homography, applyH, store } from './shared.js?v=8';
+import { InferenceHTTPClient, webrtc } from './vendor/inference-sdk-0.4.0.js?v=9';
+import { peerIdFor, WORKFLOW_SPEC, PROXY_URL, CORNERS, UNIT, homography, applyH, store } from './shared.js?v=9';
 
 const $ = id => document.getElementById(id);
 const vid = $('vid'), ov = $('ov'), octx = ov.getContext('2d'), stateEl = $('state'), hint = $('hint');
@@ -218,6 +218,7 @@ function draw() {
   // detections: a small square at each person's feet
   octx.fillStyle = '#C29AF6';
   for (const p of lastPeople) { const [x, y] = toScreen([p.fx, p.fy], r); octx.fillRect(x - 3, y - 3, 6, 6); }
+  if (calibrating) drawGrid(r);
   // the calibration quad
   const pts = corners.map(c => toScreen(c, r));
   octx.strokeStyle = calibrating ? '#F4F2EC' : 'rgba(244,242,236,.35)'; octx.lineWidth = calibrating ? 2 : 1;
@@ -229,20 +230,64 @@ function draw() {
       octx.fillStyle = '#121110'; octx.font = '600 15px ui-monospace, Menlo, monospace'; octx.textAlign = 'center'; octx.textBaseline = 'middle';
       octx.fillText(String(i + 1), x, y + 1);
     });
-    drawMiniMap(W, Hh);
+    drawTopDown(W, Hh);
   }
   requestAnimationFrame(draw);
 }
-// which chair is which: the seat map with the stage at the top and the four corners numbered
-function drawMiniMap(W, Hh) {
-  const mw = 132, mh = 92, x0 = W - mw - 12, y0 = W > Hh ? 12 : Hh - mh - 12; // top right in landscape, clear of the hint
-  octx.fillStyle = 'rgba(18,17,16,.92)'; octx.fillRect(x0, y0, mw, mh);
-  octx.fillStyle = '#8f8b85'; octx.fillRect(x0 + 30, y0 + 8, mw - 60, 6);
-  octx.font = '9px ui-monospace, Menlo, monospace'; octx.textAlign = 'center'; octx.textBaseline = 'top'; octx.fillText('STAGE', x0 + mw / 2, y0 + 16);
-  const bx = [x0 + 20, x0 + mw / 2 + 6], by = y0 + 32, cw = mw / 2 - 26, ch = 46;
-  octx.fillStyle = 'rgba(244,242,236,.35)'; bx.forEach(x => octx.fillRect(x, by, cw, ch));
-  const cs = [[bx[0], by], [bx[1] + cw, by], [bx[1] + cw, by + ch], [bx[0], by + ch]];
-  cs.forEach(([x, y], i) => {
+// ---------------------------------------------------------------- calibration aids
+// The display's floor around the calibrated block, in calibration units (0..1 is chair 1 to chair 3). Matches FLOOR/CAL in display.js.
+const VIEW = { u0: -0.46, u1: 1.35, v0: -0.3, v1: 1.65 }, VIEW_ASPECT = 620 / 250;
+// Project a floor point (u, v) back into the camera frame. Returns null if it falls behind the camera.
+function toFrame(Hi, u, v) { const w = Hi[6] * u + Hi[7] * v + Hi[8]; if (w <= 1e-6) return null; return [(Hi[0] * u + Hi[1] * v + Hi[2]) / w, (Hi[3] * u + Hi[4] * v + Hi[5]) / w]; }
+// A floor grid drawn into the camera view: the lines should run along the real rows and aisles.
+function drawGrid(r) {
+  const Hi = homography(UNIT, corners); if (!Hi) return;
+  const line = (f, a0, a1) => { octx.beginPath(); let on = false; for (let k = 0; k <= 40; k++) { const t = a0 + (a1 - a0) * k / 40, q = f(t); if (!q) { on = false; continue; } const [x, y] = toScreen(q, r); on ? octx.lineTo(x, y) : octx.moveTo(x, y); on = true; } octx.stroke(); };
+  octx.lineWidth = 1;
+  for (let i = -4; i <= 13; i++) { const u = i / 10; octx.strokeStyle = i === 5 ? 'rgba(194,154,246,.9)' : (i >= 0 && i <= 10 ? 'rgba(244,242,236,.45)' : 'rgba(244,242,236,.18)'); line(v => toFrame(Hi, u, v), VIEW.v0, VIEW.v1); }
+  for (let i = -3; i <= 16; i++) { const v = i / 10; octx.strokeStyle = i >= 0 && i <= 10 ? 'rgba(244,242,236,.45)' : 'rgba(244,242,236,.18)'; line(u => toFrame(Hi, u, v), VIEW.u0, VIEW.u1); }
+}
+// A top-down preview: the camera image unwarped the way the display will see it. Straight aisles should look straight
+// and run up and down; people show as lavender dots exactly where the display will draw them.
+const grab = document.createElement('canvas'), gctx = grab.getContext('2d', { willReadFrequently: true });
+const topd = document.createElement('canvas'), tctx = topd.getContext('2d');
+let lastWarp = 0;
+function warpPreview(pw, ph) {
+  const Hi = homography(UNIT, corners); if (!Hi || !vid.videoWidth) return;
+  const gw = 320, gh = Math.max(1, Math.round(320 * vid.videoHeight / vid.videoWidth));
+  if (grab.width !== gw || grab.height !== gh) { grab.width = gw; grab.height = gh; }
+  if (topd.width !== pw || topd.height !== ph) { topd.width = pw; topd.height = ph; }
+  try { gctx.drawImage(vid, 0, 0, gw, gh); } catch { return; }
+  const src = gctx.getImageData(0, 0, gw, gh).data, out = tctx.createImageData(pw, ph), d = out.data;
+  for (let y = 0; y < ph; y++) {
+    const v = VIEW.v0 + (VIEW.v1 - VIEW.v0) * (y + 0.5) / ph;
+    for (let x = 0; x < pw; x++) {
+      const u = VIEW.u0 + (VIEW.u1 - VIEW.u0) * (x + 0.5) / pw, q = toFrame(Hi, u, v), o = (y * pw + x) * 4;
+      d[o + 3] = 255;
+      if (!q || q[0] < 0 || q[0] >= 1 || q[1] < 0 || q[1] >= 1) { d[o] = d[o + 1] = d[o + 2] = 18; continue; }
+      const i = ((q[1] * gh | 0) * gw + (q[0] * gw | 0)) * 4; d[o] = src[i]; d[o + 1] = src[i + 1]; d[o + 2] = src[i + 2];
+    }
+  }
+  tctx.putImageData(out, 0, 0);
+}
+function drawTopDown(W, Hh) {
+  const pw = Math.round(Math.min(W * 0.4, 300)), ph = Math.round(pw / VIEW_ASPECT);
+  const x0 = W - pw - 12, y0 = W > Hh ? 26 : Hh - ph - 12; // top right in landscape, clear of the hint
+  const now = performance.now(); if (now - lastWarp > 120) { lastWarp = now; warpPreview(pw, ph); }
+  octx.fillStyle = '#121110'; octx.fillRect(x0 - 1, y0 - 15, pw + 2, ph + 16);
+  octx.fillStyle = '#8f8b85'; octx.font = '9px ui-monospace, Menlo, monospace'; octx.textAlign = 'center'; octx.textBaseline = 'top';
+  octx.fillText('STAGE  \u2191  top-down preview', x0 + pw / 2, y0 - 12);
+  octx.drawImage(topd, x0, y0, pw, ph);
+  const P = (u, v) => [x0 + (u - VIEW.u0) / (VIEW.u1 - VIEW.u0) * pw, y0 + (v - VIEW.v0) / (VIEW.v1 - VIEW.v0) * ph];
+  // the calibrated block and its center line
+  octx.strokeStyle = 'rgba(244,242,236,.6)'; octx.lineWidth = 1;
+  const [ax, ay] = P(0, 0), [bx, by] = P(1, 1); octx.strokeRect(ax, ay, bx - ax, by - ay);
+  octx.strokeStyle = 'rgba(194,154,246,.9)'; octx.beginPath(); octx.moveTo(P(0.5, VIEW.v0)[0], y0); octx.lineTo(P(0.5, VIEW.v0)[0], y0 + ph); octx.stroke();
+  // people, where the display will put them
+  if (H) { octx.fillStyle = '#C29AF6'; for (const p of lastPeople) { const [u, v] = applyH(H, p.fx, p.fy), [x, y] = P(u, v); if (x > x0 && x < x0 + pw && y > y0 && y < y0 + ph) octx.fillRect(x - 2.5, y - 2.5, 5, 5); } }
+  // the four corners
+  UNIT.forEach(([u, v], i) => {
+    const [x, y] = P(u, v);
     octx.fillStyle = i === activeCorner ? '#C29AF6' : '#F4F2EC'; octx.beginPath(); octx.arc(x, y, 7, 0, Math.PI * 2); octx.fill();
     octx.fillStyle = '#121110'; octx.font = '600 9px ui-monospace, Menlo, monospace'; octx.textBaseline = 'middle'; octx.fillText(String(i + 1), x, y + 0.5);
   });
@@ -271,7 +316,7 @@ function updateHint() {
   hint.hidden = false;
   const i = activeCorner >= 0 ? activeCorner : null;
   hint.innerHTML = i == null
-    ? 'Drag the points onto the <b>seats</b> of the four outer corner chairs (where a seated person\'s middle would be). Then use <b>Rotate</b> and <b>Mirror</b> until 1 and 2 are the front row, nearest the stage, matching the map.'
+    ? 'Drag the 4 points so the <b>grid lines follow the real rows and aisles</b> (at seat height). The lavender line is the middle. In the top-down preview, aisles should run straight up and down. Use <b>Rotate</b> and <b>Mirror</b> until the stage is at the top of the preview.'
     : `Point <b>${i + 1}</b>: ${CORNERS[i]}`;
 }
 // From a side view the "front left" chair can be anywhere on screen. Rotate moves which point is 1 (the four points
@@ -300,7 +345,7 @@ function render() {
   const live = S.stream === 'live';
   stateEl.innerHTML = [
     `<span>code <b>${escapeHtml(code)}</b></span>`,
-    `<span>build <b>8</b></span>`,
+    `<span>build <b>9</b></span>`,
     `<span>stream <b class="${live ? 'live' : ''}">${escapeHtml(S.stream)}</b></span>`,
     `<span>display <b class="${S.link === 'display connected' ? 'live' : 'bad'}">${escapeHtml(S.link)}</b></span>`,
     live ? `<span>people <b>${S.n}</b></span><span>on map <b class="${S.onMap ? 'live' : 'bad'}">${S.onMap ?? 0}</b></span><span><b>${S.fps}</b> fps</span>` : '',
