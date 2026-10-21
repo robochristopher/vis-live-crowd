@@ -1,6 +1,6 @@
 // VIS live crowd: the display. Runs fullscreen on the laptop whose HDMI goes to AVT's picture-in-picture.
 // It draws the seat map from the positions the balcony phone sends, and nothing else: no data, empty seats.
-import { peerIdFor, store } from './shared.js?v=12';
+import { peerIdFor, store } from './shared.js?v=13';
 
 const params = new URLSearchParams(location.search);
 const CODE = params.get('code') || store.get('vis_code', 'vis');
@@ -90,7 +90,7 @@ const crowd = (() => {
       p.a += (p.ta - p.a) * k; p.b += (p.tb - p.b) * k;
       track(p, dt);
     }
-    for (const p of people) splat(p.a, p.b, 1.1 - 0.85 * p.moveK, 5.5);
+    for (const p of people) splat(p.a, p.b, 1.1 - 0.85 * p.moveK, 3.9); // radius 3.9: half the glow area of the earlier 5.5
     const k = Math.min(1, dt * 2.5);
     for (let i = 0; i < heat.length; i++) heat[i] += (target[i] - heat[i]) * k;
   }
