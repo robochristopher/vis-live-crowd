@@ -7,7 +7,7 @@ export const WORKFLOW_ID = 'vis-live-crowd';
 
 // The relay that forwards stream setup to serverless.roboflow.com (Roboflow refuses it straight from a browser).
 // Override with ?proxy=https://... on the camera page for testing.
-export const PROXY_URL = (new URLSearchParams(location.search).get('proxy') || '__PROXY_URL__').replace(/\/$/, '');
+export const PROXY_URL = (new URLSearchParams(location.search).get('proxy') || 'https://vis-live-crowd-relay.christopher-0e6.workers.dev').replace(/\/$/, '');
 
 // The four calibration points, in the order the operator taps them on the phone.
 // They are the outer chairs of the seating, as they appear on the seat map (stage at the top):

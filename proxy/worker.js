@@ -1,4 +1,4 @@
-// VIS live crowd relay (Cloudflare Worker).
+// VIS live crowd relay (Cloudflare Worker "vis-live-crowd-relay" on Chris's account: https://vis-live-crowd-relay.christopher-0e6.workers.dev).
 // Roboflow's serverless API only accepts browser requests from app.roboflow.com, so the camera page sends its two
 // stream calls here and this forwards them to serverless.roboflow.com unchanged. No keys are stored here: the page
 // includes its own Roboflow key in each request, exactly as it would when calling Roboflow directly.
