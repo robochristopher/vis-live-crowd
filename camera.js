@@ -1,8 +1,8 @@
 // VIS live crowd: the camera. Runs on the phone on the balcony.
 // Streams the camera to the "VIS Live Crowd" Roboflow workflow (RF-DETR + ByteTrack) over WebRTC, maps each
 // person's feet onto the seat map using the four calibration chairs, and sends only those positions to the display.
-import { InferenceHTTPClient, webrtc } from './vendor/inference-sdk-0.4.0.js?v=11';
-import { peerIdFor, WORKFLOW_SPEC, PROXY_URL, CORNERS, UNIT, homography, applyH, store } from './shared.js?v=11';
+import { InferenceHTTPClient, webrtc } from './vendor/inference-sdk-0.4.0.js?v=12';
+import { peerIdFor, WORKFLOW_SPEC, PROXY_URL, CORNERS, UNIT, homography, applyH, store } from './shared.js?v=12';
 
 const $ = id => document.getElementById(id);
 const vid = $('vid'), ov = $('ov'), octx = ov.getContext('2d'), stateEl = $('state'), hint = $('hint');
@@ -215,9 +215,10 @@ function draw() {
   if (ov.width !== Math.round(W * dpr) || ov.height !== Math.round(Hh * dpr)) { ov.width = Math.round(W * dpr); ov.height = Math.round(Hh * dpr); }
   octx.setTransform(dpr, 0, 0, dpr, 0, 0); octx.clearRect(0, 0, W, Hh);
   const r = contentRect();
-  // detections: a small square at each person's feet
+  if (topView) { drawTopDown(W, Hh); requestAnimationFrame(draw); return; }
+  // detections: a small square at each person (hidden while calibrating: only the grid and points show then)
   octx.fillStyle = '#C29AF6';
-  for (const p of lastPeople) { const [x, y] = toScreen([p.fx, p.fy], r); octx.fillRect(x - 3, y - 3, 6, 6); }
+  if (!calibrating) for (const p of lastPeople) { const [x, y] = toScreen([p.fx, p.fy], r); octx.fillRect(x - 3, y - 3, 6, 6); }
   if (calibrating) drawGrid(r);
   // the calibration quad
   const pts = corners.map(c => toScreen(c, r));
@@ -230,7 +231,6 @@ function draw() {
       octx.fillStyle = '#121110'; octx.font = '600 15px ui-monospace, Menlo, monospace'; octx.textAlign = 'center'; octx.textBaseline = 'middle';
       octx.fillText(String(i + 1), x, y + 1);
     });
-    drawTopDown(W, Hh);
   }
   requestAnimationFrame(draw);
 }
@@ -254,7 +254,7 @@ const topd = document.createElement('canvas'), tctx = topd.getContext('2d');
 let lastWarp = 0;
 function warpPreview(pw, ph) {
   const Hi = homography(UNIT, corners); if (!Hi || !vid.videoWidth) return;
-  const gw = 320, gh = Math.max(1, Math.round(320 * vid.videoHeight / vid.videoWidth));
+  const gw = 640, gh = Math.max(1, Math.round(640 * vid.videoHeight / vid.videoWidth));
   if (grab.width !== gw || grab.height !== gh) { grab.width = gw; grab.height = gh; }
   if (topd.width !== pw || topd.height !== ph) { topd.width = pw; topd.height = ph; }
   try { gctx.drawImage(vid, 0, 0, gw, gh); } catch { return; }
@@ -271,8 +271,10 @@ function warpPreview(pw, ph) {
   tctx.putImageData(out, 0, 0);
 }
 function drawTopDown(W, Hh) {
-  const pw = Math.round(Math.min(W * 0.4, 300)), ph = Math.round(pw / VIEW_ASPECT);
-  const x0 = W - pw - 12, y0 = W > Hh ? 26 : Hh - ph - 12; // top right in landscape, clear of the hint
+  // fills the camera area, in place of the camera view (Top-down button)
+  octx.fillStyle = '#000'; octx.fillRect(0, 0, W, Hh);
+  const pw = Math.round(Math.min(W - 24, (Hh - 40) * VIEW_ASPECT)), ph = Math.round(pw / VIEW_ASPECT);
+  const x0 = Math.round((W - pw) / 2), y0 = Math.round((Hh - ph) / 2) + 8;
   const now = performance.now(); if (now - lastWarp > 120) { lastWarp = now; warpPreview(pw, ph); }
   octx.fillStyle = '#121110'; octx.fillRect(x0 - 1, y0 - 15, pw + 2, ph + 16);
   octx.fillStyle = '#8f8b85'; octx.font = '9px ui-monospace, Menlo, monospace'; octx.textAlign = 'center'; octx.textBaseline = 'top';
@@ -294,9 +296,9 @@ function drawTopDown(W, Hh) {
 }
 requestAnimationFrame(draw);
 
-let activeCorner = -1;
+let activeCorner = -1, topView = false;
 ov.addEventListener('pointerdown', e => {
-  if (!calibrating) return;
+  if (!calibrating || topView) return;
   const r = contentRect(), b = ov.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
   let best = -1, bd = 60;
   corners.forEach((c, i) => { const [sx, sy] = toScreen(c, r), d = Math.hypot(sx - x, sy - y); if (d < bd) { bd = d; best = i; } });
@@ -338,11 +340,14 @@ function squareUp(c) {
 function setCorners(next) { const h = homography(next, UNIT); if (!h) return; corners = next; H = h; store.set('vis_cal', corners); updateHint(); }
 $('rotBtn').addEventListener('click', () => setCorners([corners[3], corners[0], corners[1], corners[2]]));
 $('mirBtn').addEventListener('click', () => setCorners([corners[1], corners[0], corners[3], corners[2]]));
+function setTop(on) { topView = on; $('topBtn').setAttribute('aria-pressed', String(on)); vid.style.visibility = on ? 'hidden' : ''; }
+$('topBtn').addEventListener('click', () => setTop(!topView));
 $('balBtn').addEventListener('click', () => setCorners(balconyCorners()));
 $('sqBtn').addEventListener('click', () => setCorners(squareUp(corners)));
 $('calBtn').addEventListener('click', () => {
   calibrating = !calibrating; $('calBtn').setAttribute('aria-pressed', String(calibrating)); activeCorner = -1; updateHint();
-  $('rotBtn').hidden = $('mirBtn').hidden = $('balBtn').hidden = $('sqBtn').hidden = !calibrating;
+  $('rotBtn').hidden = $('mirBtn').hidden = $('balBtn').hidden = $('sqBtn').hidden = $('topBtn').hidden = !calibrating;
+  if (!calibrating) setTop(false);
   if (calibrating && !mediaStream) previewOnly();
 });
 // show the camera for calibration without starting the cloud stream
@@ -361,7 +366,7 @@ function render() {
   const live = S.stream === 'live';
   stateEl.innerHTML = [
     `<span>code <b>${escapeHtml(code)}</b></span>`,
-    `<span>build <b>11</b></span>`,
+    `<span>build <b>12</b></span>`,
     `<span>stream <b class="${live ? 'live' : ''}">${escapeHtml(S.stream)}</b></span>`,
     `<span>display <b class="${S.link === 'display connected' ? 'live' : 'bad'}">${escapeHtml(S.link)}</b></span>`,
     live ? `<span>people <b>${S.n}</b></span><span>on map <b class="${S.onMap ? 'live' : 'bad'}">${S.onMap ?? 0}</b></span><span><b>${S.fps}</b> fps</span>` : '',
