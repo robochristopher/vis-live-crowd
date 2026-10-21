@@ -1,11 +1,9 @@
 // VIS live crowd: the display. Runs fullscreen on the laptop whose HDMI goes to AVT's picture-in-picture.
-// It draws the seat map from the positions the balcony phone sends. If positions stop arriving it eases into
-// simulated arrivals, so the wall never freezes or empties.
+// It draws the seat map from the positions the balcony phone sends, and nothing else: no data, empty seats.
 import { peerIdFor, store } from './shared.js';
 
 const params = new URLSearchParams(location.search);
 const CODE = params.get('code') || store.get('vis_code', 'vis');
-const SIM_MINUTES = parseFloat(params.get('sim') || '6'); // how long the fallback simulation takes to fill the room
 const LIVE_TIMEOUT = 3;   // seconds without positions before the fallback takes over
 
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
@@ -31,8 +29,6 @@ const crowd = (() => {
   for (const bx of [228, 425]) for (let r = 0; r < 10; r++) for (let c = 0; c < 10; c++) SEATS.push({ x: bx + c * 16.2, y: 173 + r * 14.3, r, c: c + (bx > 300 ? 10 : 0), taken: false });
   // the calibration chairs (seat centers at the four outer corners of the seating)
   const CAL = { x0: 228, y0: 173, x1: 425 + 9 * 16.2, y1: 173 + 9 * 14.3 };
-  const AISLES = [205, 401, 597], FRONT = 158, BACK = 322;
-  const DOORS = [[64, 150, 0.6], [250, 396, 0.4]];
   const VW = VIEW.x1 - VIEW.x0, VH = VIEW.y1 - VIEW.y0;
   const PS = Math.min((P.w - 140) / VW, (P.h - 140) / VH), PX = P.x + (P.w - VW * PS) / 2 - VIEW.x0 * PS, PY = P.y + (P.h - VH * PS) / 2 - VIEW.y0 * PS;
   const toPx = (a, b) => [PX + a * PS, PY + b * PS];
@@ -49,26 +45,7 @@ const crowd = (() => {
 
   const TRAIL = 64, TRAIL_DT = 0.05; // about three seconds of path behind each walker
   let people = [];
-  let mode = 'sim', queue = 0, nextAt = 0, simArrived = 0, simT = 0, lastSeat = null, lastLive = -99;
-  const SIM_TOTAL = 210;
-  function pickSeat() {
-    const open = SEATS.filter(s => !s.taken); if (!open.length) return null;
-    if (lastSeat && Math.random() < 0.45) { const n = open.filter(s => s.r === lastSeat.r && Math.abs(s.c - lastSeat.c) === 1 && Math.floor(s.c / 10) === Math.floor(lastSeat.c / 10)); if (n.length) return n[0]; }
-    let best = null, bw = -1;
-    for (let k = 0; k < 24; k++) { const s = open[Math.floor(Math.random() * open.length)], cc = s.c % 10, mid = s.c < 10 ? 9 - cc : cc, w = Math.random() * Math.exp(-s.r * 0.16) * Math.exp(-mid * 0.06); if (w > bw) { bw = w; best = s; } }
-    return best;
-  }
-  function routeTo(door, tx, ty) {
-    const j = () => (Math.random() - 0.5) * 9;
-    const aisle = AISLES.reduce((p, x) => Math.abs(x - tx) < Math.abs(p - tx) ? x : p) + j(), cross = (door[1] < 250 ? FRONT : BACK) + j();
-    return [[(door[0] < 100 ? 80 : door[0]) + j(), cross], [aisle, cross], [aisle, ty + j() * 0.3], [tx, ty]];
-  }
-  function arrive() {
-    const d = Math.random() < DOORS[0][2] ? DOORS[0] : DOORS[1];
-    let s = pickSeat(), tx, ty;
-    if (s) { s.taken = true; lastSeat = s; tx = s.x; ty = s.y; } else { tx = 90 + Math.random() * 580; ty = 332 + Math.random() * 46; lastSeat = null; }
-    people.push({ sim: true, a: d[0], b: d[1], path: routeTo(d, tx, ty), sp: 42 + Math.random() * 22, hist: [], ht: 0, moveK: 1, speed: 0 });
-  }
+  let mode = 'waiting', lastLive = -99;
   function track(p, dt) {
     if ((p.ht += dt) >= TRAIL_DT) { p.ht = 0; p.hist.unshift([p.a, p.b]); if (p.hist.length > TRAIL) p.hist.pop(); }
     const moving = p.speed > 4;
@@ -76,13 +53,10 @@ const crowd = (() => {
     if (!moving) p.hist.splice(-2, 2);
   }
 
-  // ---- live: positions arrive in calibration units (the unit square spanned by the four corner chairs)
+  // ---- live only: positions arrive in calibration units (the unit square spanned by the four corner chairs).
+  // There is no simulation: with no data the room shows empty seats, so the wall can't look live when it isn't.
   function ingest(list) {
-    lastLive = clock;
-    if (mode !== 'live') {
-      // switching to live: the simulated room steps aside; the warmth it left fades over a second
-      mode = 'live'; people = people.filter(p => !p.sim); SEATS.forEach(s => s.taken = false);
-    }
+    lastLive = clock; mode = 'live';
     const byId = new Map(people.map(p => [p.id, p]));
     for (const [id, u, v] of list) {
       const a = CAL.x0 + u * (CAL.x1 - CAL.x0), b = CAL.y0 + v * (CAL.y1 - CAL.y0);
@@ -94,42 +68,22 @@ const crowd = (() => {
   }
   function step(dt) {
     target.fill(0);
-    if (mode === 'live' && clock - lastLive > LIVE_TIMEOUT) {
-      // the feed went quiet: everyone stays where they are and the simulation carries on from here
-      mode = 'sim'; people.forEach(p => { p.sim = true; p.path = []; p.sp = 50; });
-      simArrived = people.length; simT = Math.max(simT, simTimeFor(people.length));
-    }
-    if (mode === 'sim') {
-      simT += dt;
-      const fill = 1 - Math.exp(-simT / (SIM_MINUTES * 60 / 3)); // most of the room arrives within SIM_MINUTES
-      const want = Math.round(SIM_TOTAL * fill);
-      if (want > simArrived) { queue += want - simArrived; simArrived = want; }
-      if (queue > 0 && clock >= nextAt) { arrive(); queue--; nextAt = clock + (Math.random() < 0.4 ? 0.06 + Math.random() * 0.08 : 0.16 + Math.random() * 0.3) * (queue > 20 ? 0.4 : 1); }
-      for (const p of people) {
-        let left = p.sp * dt, moved = 0;
-        while (left > 0 && p.path && p.path.length) {
-          const [tx, ty] = p.path[0], dx = tx - p.a, dy = ty - p.b, d = Math.hypot(dx, dy);
-          if (d <= left) { p.a = tx; p.b = ty; left -= d; moved += d; p.path.shift(); } else { p.a += dx / d * left; p.b += dy / d * left; moved += left; left = 0; }
-        }
-        p.speed = moved / dt; track(p, dt);
-      }
-    } else {
-      for (let i = people.length - 1; i >= 0; i--) {
-        const p = people[i];
-        // someone drops out only when newer positions keep arriving without them; a stalled feed keeps everyone
-        if (lastLive - p.seen > 1.5) { people.splice(i, 1); continue; }
-        // positions arrive a few times a second: glide toward each one so walkers move smoothly
-        const k = Math.min(1, dt * 7), na = p.a + (p.ta - p.a) * k, nb = p.b + (p.tb - p.b) * k;
-        const sp = Math.hypot(na - p.a, nb - p.b) / Math.max(dt, 1e-3);
-        p.speed += (sp - p.speed) * Math.min(1, dt * 5); p.a = na; p.b = nb;
-        track(p, dt);
-      }
+    // the feed went quiet: the room empties and the seats cool back to grey
+    if (mode === 'live' && clock - lastLive > LIVE_TIMEOUT) { mode = 'lost'; people = []; }
+    for (let i = people.length - 1; i >= 0; i--) {
+      const p = people[i];
+      // someone drops out when newer positions keep arriving without them
+      if (lastLive - p.seen > 1.5) { people.splice(i, 1); continue; }
+      // positions arrive a few times a second: glide toward each one so walkers move smoothly
+      const k = Math.min(1, dt * 7), na = p.a + (p.ta - p.a) * k, nb = p.b + (p.tb - p.b) * k;
+      const sp = Math.hypot(na - p.a, nb - p.b) / Math.max(dt, 1e-3);
+      p.speed += (sp - p.speed) * Math.min(1, dt * 5); p.a = na; p.b = nb;
+      track(p, dt);
     }
     for (const p of people) splat(p.a, p.b, 1.1 - 0.85 * p.moveK, 5.5);
     const k = Math.min(1, dt * 2.5);
     for (let i = 0; i < heat.length; i++) heat[i] += (target[i] - heat[i]) * k;
   }
-  const simTimeFor = n => -Math.log(Math.max(1e-3, 1 - Math.min(0.999, n / SIM_TOTAL))) * (SIM_MINUTES * 60 / 3);
 
   function sample(c) {
     const cols = Math.ceil(P.w / c), rows = Math.ceil(P.h / c), bits = new Uint8Array(cols * rows);
@@ -167,7 +121,7 @@ const crowd = (() => {
       c2d.fillRect(P.x + i * c + g, P.y + j * c + g, c - g, c - g);
     }
   }
-  function reset() { people = []; queue = 0; simArrived = 0; simT = 0; nextAt = 0; lastSeat = null; SEATS.forEach(s => s.taken = false); heat.fill(0); }
+  function reset() { people = []; heat.fill(0); }
   return { step, sample, drawDots, ingest, reset, get count() { return people.length; }, get mode() { return mode; }, get lastLive() { return lastLive; } };
 })();
 
@@ -227,7 +181,7 @@ function updateStatus() {
   statusEl.innerHTML = [
     `code      <b>${CODE}</b>`,
     `link      ${peerState}`,
-    `source    ${crowd.mode === 'live' ? '<b>live</b>' : 'simulated (no live positions)'}`,
+    `source    ${crowd.mode === 'live' ? '<b>live</b>' : crowd.mode === 'lost' ? 'live data stopped' : 'no live data yet'}`,
     `last data ${crowd.lastLive < 0 ? 'never' : age.toFixed(1) + ' s ago'}`,
     `people    ${crowd.count}`,
     camInfo.fps != null ? `camera    ${camInfo.fps} fps · ${camInfo.n ?? '?'} detected · ${camInfo.state || ''}` : `camera    no report yet`,

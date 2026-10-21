@@ -33,6 +33,17 @@
   #setup label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
   #setup input { width: 100%; text-transform: none; letter-spacing: 0; }
   #setup .err { color: var(--bad); min-height: 1.4em; }
+  #setup { overflow-y: auto; }
+
+  /* landscape phone: camera fills the height, controls stack in a column on the right */
+  @media (orientation: landscape) {
+    body { grid-template-rows: 1fr; grid-template-columns: 1fr minmax(220px, 30vw); padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+    #bar { border-top: 0; border-left: 1px solid var(--line); padding: 12px; align-content: start; overflow-y: auto; }
+    #state { flex-direction: column; gap: 4px; }
+    #bar .row { flex-direction: column; }
+    #bar .row button { width: 100%; padding: 12px 10px; }
+    #hint { right: auto; max-width: 52%; font-size: 12px; padding: 8px 10px; }
+  }
 </style>
 </head>
 <body>

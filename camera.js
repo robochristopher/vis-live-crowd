@@ -1,8 +1,8 @@
 // VIS live crowd: the camera. Runs on the phone on the balcony.
 // Streams the camera to the "VIS Live Crowd" Roboflow workflow (RF-DETR + ByteTrack) over WebRTC, maps each
 // person's feet onto the seat map using the four calibration chairs, and sends only those positions to the display.
-import { connectors, webrtc } from './vendor/inference-sdk-0.4.0.js';
-import { peerIdFor, WORKFLOW_ID, CORNERS, UNIT, homography, applyH, store } from './shared.js';
+import { InferenceHTTPClient, webrtc } from './vendor/inference-sdk-0.4.0.js';
+import { peerIdFor, WORKFLOW_ID, PROXY_URL, CORNERS, UNIT, homography, applyH, store } from './shared.js';
 
 const $ = id => document.getElementById(id);
 const vid = $('vid'), ov = $('ov'), octx = ov.getContext('2d'), stateEl = $('state'), hint = $('hint');
@@ -29,9 +29,46 @@ $('setupForm').addEventListener('submit', async e => {
   const ws = await workspaceFor(k).catch(() => null);
   if (!ws) { $('setupErr').textContent = 'Roboflow did not accept that key. Copy it again from Settings, API Keys.'; return; }
   code = c; apiKey = k; store.set('vis_code', code); store.set('vis_rf_key', apiKey); store.set('vis_ws', ws);
+  turnCache = null; await roboflowTurn(apiKey);
   $('setup').hidden = true; connectPeer(true); render();
 });
 $('setBtn').addEventListener('click', () => showSetup());
+
+// Roboflow's relay (TURN) servers: they keep the stream and the link to the display working on any network
+let turnCache = null;
+async function roboflowTurn(key) {
+  if (turnCache) return turnCache;
+  try {
+    const r = await fetch(`https://api.roboflow.com/webrtc_turn_config?api_key=${encodeURIComponent(key)}`);
+    if (!r.ok) return null;
+    const t = await r.json(), list = Array.isArray(t) ? t : t.iceServers || (t.urls ? [t] : []);
+    turnCache = list.map(o => ({ urls: Array.isArray(o.urls) ? o.urls : [o.urls], username: o.username, credential: o.credential }));
+    return turnCache;
+  } catch { return null; }
+}
+const STUN = [{ urls: ['stun:stun.l.google.com:19302'] }];
+
+// Roboflow only accepts stream setup from a server, so the request goes through our small relay (proxy/worker.js),
+// which forwards it to serverless.roboflow.com unchanged
+const rfClient = key => InferenceHTTPClient.init({ apiKey: key, serverUrl: PROXY_URL });
+let pipelineId = null;
+function proxyConnector(key) {
+  return {
+    connectWrtc: async (offer, p) => {
+      const answer = await rfClient(key).initializeWebrtcWorker({
+        offer, workspaceName: p.workspaceName, workflowId: p.workflowId,
+        config: {
+          imageInputName: p.imageInputName, streamOutputNames: p.streamOutputNames, dataOutputNames: p.dataOutputNames,
+          iceServers: p.iceServers, processingTimeout: p.processingTimeout, requestedPlan: p.requestedPlan,
+          requestedRegion: p.requestedRegion, realtimeProcessing: p.realtimeProcessing,
+        },
+      });
+      pipelineId = answer?.context?.pipeline_id || null;
+      return answer;
+    },
+    getIceServers: () => roboflowTurn(key),
+  };
+}
 
 async function workspaceFor(key) {
   const r = await fetch(`https://api.roboflow.com/?api_key=${encodeURIComponent(key)}`);
@@ -45,7 +82,7 @@ let peer = null;
 function connectPeer(fresh = false) {
   if (fresh && peer) { try { peer.destroy(); } catch {} peer = null; conn = null; }
   if (!peer || peer.destroyed) {
-    peer = new Peer({ debug: 1 });
+    peer = new Peer({ debug: 1, config: { iceServers: [...STUN, ...(turnCache || [])] } });
     peer.on('open', dial);
     peer.on('disconnected', () => { S.link = 'signal lost'; setTimeout(() => { try { peer.reconnect(); } catch {} }, 1500); });
     peer.on('error', err => {
@@ -90,11 +127,12 @@ async function start() {
     const ws = store.get('vis_ws') || await workspaceFor(apiKey);
     store.set('vis_ws', ws);
     S.stream = 'opening camera'; render();
-    mediaStream = mediaStream || await getSource(); // reuse the calibration preview if it is already open
+    try { mediaStream = mediaStream || await getSource(); } // reuse the calibration preview if it is already open
+    catch (e) { throw new Error(`Camera: ${e.message || e}`); }
     S.stream = 'starting Roboflow (first frames can take up to a minute)'; render();
     rf = await webrtc.useStream({
       source: mediaStream,
-      connector: connectors.withApiKey(apiKey),
+      connector: proxyConnector(apiKey),
       wrtcParams: {
         workspaceName: ws,
         workflowId: WORKFLOW_ID,
@@ -114,7 +152,9 @@ async function start() {
     });
     S.stream = 'waiting for first results'; S.startedAt = performance.now(); S.lastData = 0;
   } catch (err) {
-    S.stream = 'stopped'; S.error = String(err?.message || err).slice(0, 160);
+    const msg = String(err?.message || err);
+    S.stream = 'stopped';
+    S.error = /load failed|failed to fetch|networkerror/i.test(msg) ? 'Could not reach the Roboflow relay. Check the internet connection.' : msg.slice(0, 160);
     if (wantRunning) setTimeout(() => { if (wantRunning) restart('retry after error'); }, 5000);
   } finally { starting = false; render(); syncButtons(); }
 }
@@ -124,7 +164,9 @@ async function stop() {
   S.stream = 'stopped'; render(); syncButtons();
 }
 async function teardown() {
-  const r = rf; rf = null;
+  const r = rf, id = pipelineId; rf = null; pipelineId = null;
+  // stop the cloud pipeline so it stops billing (the SDK's own cleanup can't reach Roboflow from this page)
+  if (id) { try { await rfClient(apiKey).terminatePipeline({ pipelineId: id }); } catch {} }
   if (r) { try { await r.cleanup(); } catch {} }
   if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
 }
@@ -191,7 +233,7 @@ function draw() {
 }
 // which chair is which: the seat map with the stage at the top and the four corners numbered
 function drawMiniMap(W, Hh) {
-  const mw = 132, mh = 92, x0 = W - mw - 12, y0 = Hh - mh - 12;
+  const mw = 132, mh = 92, x0 = W - mw - 12, y0 = W > Hh ? 12 : Hh - mh - 12; // top right in landscape, clear of the hint
   octx.fillStyle = 'rgba(18,17,16,.92)'; octx.fillRect(x0, y0, mw, mh);
   octx.fillStyle = '#8f8b85'; octx.fillRect(x0 + 30, y0 + 8, mw - 60, 6);
   octx.font = '9px ui-monospace, Menlo, monospace'; octx.textAlign = 'center'; octx.textBaseline = 'top'; octx.fillText('STAGE', x0 + mw / 2, y0 + 16);
@@ -227,7 +269,7 @@ function updateHint() {
   hint.hidden = false;
   const i = activeCorner >= 0 ? activeCorner : null;
   hint.innerHTML = i == null
-    ? 'Drag each numbered point onto the matching <b>outer chair</b> of the seating. The map bottom right shows which is which, with the stage at the top. Put the point where that chair touches the floor.'
+    ? 'Drag 1 to 4 onto the <b>outer corner chairs</b>, where each touches the floor. 1 and 2 are the front row, nearest the stage. The map shows which is which.'
     : `Point <b>${i + 1}</b>: ${CORNERS[i]}`;
 }
 $('calBtn').addEventListener('click', () => {
@@ -259,12 +301,16 @@ function render() {
 const escapeHtml = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 setInterval(render, 500);
 
+addEventListener('pagehide', () => {
+  if (pipelineId) navigator.sendBeacon?.(`${PROXY_URL}/inference_pipelines/${pipelineId}/terminate?api_key=${encodeURIComponent(apiKey)}`);
+});
+
 // keep the phone awake while it is the camera
 let wake = null;
 async function keepAwake() { try { wake = await navigator.wakeLock?.request('screen'); } catch {} }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') keepAwake(); });
 keepAwake();
 
-if (!apiKey) showSetup(); else connectPeer();
+if (!apiKey) showSetup(); else roboflowTurn(apiKey).then(() => connectPeer());
 syncButtons(); render();
 window.VISCamera = { S, start, stop, onData, get people() { return lastPeople; } }; // for testing from the console
