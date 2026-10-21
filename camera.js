@@ -1,8 +1,8 @@
 // VIS live crowd: the camera. Runs on the phone on the balcony.
 // Streams the camera to the "VIS Live Crowd" Roboflow workflow (RF-DETR + ByteTrack) over WebRTC, maps each
 // person's feet onto the seat map using the four calibration chairs, and sends only those positions to the display.
-import { InferenceHTTPClient, webrtc } from './vendor/inference-sdk-0.4.0.js?v=9';
-import { peerIdFor, WORKFLOW_SPEC, PROXY_URL, CORNERS, UNIT, homography, applyH, store } from './shared.js?v=9';
+import { InferenceHTTPClient, webrtc } from './vendor/inference-sdk-0.4.0.js?v=10';
+import { peerIdFor, WORKFLOW_SPEC, PROXY_URL, CORNERS, UNIT, homography, applyH, store } from './shared.js?v=10';
 
 const $ = id => document.getElementById(id);
 const vid = $('vid'), ov = $('ov'), octx = ov.getContext('2d'), stateEl = $('state'), hint = $('hint');
@@ -10,7 +10,7 @@ const params = new URLSearchParams(location.search);
 
 let code = params.get('code') || store.get('vis_code', 'vis');
 let apiKey = store.get('vis_rf_key', '');
-let corners = store.get('vis_cal', [[0.22, 0.48], [0.78, 0.47], [0.9, 0.86], [0.1, 0.88]]); // normalized video coords
+let corners = store.get('vis_cal', [[0.5338, 0.4229], [0.6186, 0.8603], [0.0704, 0.8603], [0.3495, 0.4229]]); // normalized video coords; default is the balcony view (see BALCONY)
 let H = homography(corners, UNIT);
 
 const S = { stream: 'idle', link: 'not connected', fps: 0, n: 0, sent: 0, lastData: 0, error: '' };
@@ -316,17 +316,40 @@ function updateHint() {
   hint.hidden = false;
   const i = activeCorner >= 0 ? activeCorner : null;
   hint.innerHTML = i == null
-    ? 'Drag the 4 points so the <b>grid lines follow the real rows and aisles</b> (at seat height). The lavender line is the middle. In the top-down preview, aisles should run straight up and down. Use <b>Rotate</b> and <b>Mirror</b> until the stage is at the top of the preview.'
+    ? 'Tap <b>Balcony view</b> first. Then fine-tune: 2 and 3 on the near ends of the front and back rows, 1 and 4 further along those same rows. Tap <b>Square up</b> after dragging so the grid stays a true rectangle. The slanted grid lines should follow the rows of chairs.'
     : `Point <b>${i + 1}</b>: ${CORNERS[i]}`;
 }
 // From a side view the "front left" chair can be anywhere on screen. Rotate moves which point is 1 (the four points
 // stay where they are); Mirror swaps left and right. Keep going until 1 and 2 sit on the front row, nearest the stage.
+// The balcony view (stage-left balcony, stage off to the right of the frame), measured from Peter's photo of Oct 21.
+// It is a true rectangle on the floor: the near ends of the rows on one level line (2 and 3), and the row lines
+// running back to where they meet (vanishing point) for 1 and 4. Coordinates are for a 4:3 photo; a 16:9 video is
+// the same view with the top and bottom cropped, so they are stretched vertically to match.
+const BALCONY = [[0.5338, 0.4422], [0.6186, 0.7702], [0.0704, 0.7702], [0.3495, 0.4422]];
+function balconyCorners() {
+  const a = vid.videoWidth && vid.videoHeight ? vid.videoWidth / vid.videoHeight : 16 / 9, k = Math.max(1, a / (4 / 3));
+  return BALCONY.map(([u, v]) => [u, 0.5 + (v - 0.5) * k]);
+}
+// Square up: keep the row lines (3 to 4 and 2 to 1) and level the near edge (2, 3) and the far edge (1, 4), so the four
+// points form a true rectangle on the floor. Rows then come out parallel and walks along the aisle come out straight.
+function squareUp(c) {
+  const [p1, p2, p3, p4] = c, yb = (p2[1] + p3[1]) / 2, yt = (p1[1] + p4[1]) / 2;
+  // where the two row lines meet
+  const d1 = [p4[0] - p3[0], p4[1] - p3[1]], d2 = [p1[0] - p2[0], p1[1] - p2[1]], den = d1[0] * d2[1] - d1[1] * d2[0];
+  const n3 = [p3[0], yb], n2 = [p2[0], yb];
+  if (Math.abs(den) < 1e-9) return [[p2[0] + d2[0] * (yt - yb) / (d2[1] || 1), yt], n2, n3, [p3[0] + d1[0] * (yt - yb) / (d1[1] || 1), yt]];
+  const t = ((p2[0] - p3[0]) * d2[1] - (p2[1] - p3[1]) * d2[0]) / den, vp = [p3[0] + d1[0] * t, p3[1] + d1[1] * t];
+  const along = (n) => { const s = (yt - n[1]) / (vp[1] - n[1]); return [n[0] + (vp[0] - n[0]) * s, yt]; };
+  return [along(n2), n2, n3, along(n3)];
+}
 function setCorners(next) { const h = homography(next, UNIT); if (!h) return; corners = next; H = h; store.set('vis_cal', corners); updateHint(); }
 $('rotBtn').addEventListener('click', () => setCorners([corners[3], corners[0], corners[1], corners[2]]));
 $('mirBtn').addEventListener('click', () => setCorners([corners[1], corners[0], corners[3], corners[2]]));
+$('balBtn').addEventListener('click', () => setCorners(balconyCorners()));
+$('sqBtn').addEventListener('click', () => setCorners(squareUp(corners)));
 $('calBtn').addEventListener('click', () => {
   calibrating = !calibrating; $('calBtn').setAttribute('aria-pressed', String(calibrating)); activeCorner = -1; updateHint();
-  $('rotBtn').hidden = $('mirBtn').hidden = !calibrating;
+  $('rotBtn').hidden = $('mirBtn').hidden = $('balBtn').hidden = $('sqBtn').hidden = !calibrating;
   if (calibrating && !mediaStream) previewOnly();
 });
 // show the camera for calibration without starting the cloud stream
@@ -345,7 +368,7 @@ function render() {
   const live = S.stream === 'live';
   stateEl.innerHTML = [
     `<span>code <b>${escapeHtml(code)}</b></span>`,
-    `<span>build <b>9</b></span>`,
+    `<span>build <b>10</b></span>`,
     `<span>stream <b class="${live ? 'live' : ''}">${escapeHtml(S.stream)}</b></span>`,
     `<span>display <b class="${S.link === 'display connected' ? 'live' : 'bad'}">${escapeHtml(S.link)}</b></span>`,
     live ? `<span>people <b>${S.n}</b></span><span>on map <b class="${S.onMap ? 'live' : 'bad'}">${S.onMap ?? 0}</b></span><span><b>${S.fps}</b> fps</span>` : '',
