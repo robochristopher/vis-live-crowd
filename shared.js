@@ -5,6 +5,20 @@ export const peerIdFor = code => `vis-live-crowd-${String(code || 'vis').toLower
 
 export const WORKFLOW_ID = 'vis-live-crowd';
 
+// The same workflow as "VIS Live Crowd" in Roboflow, sent with each stream so any workspace's API key works:
+// RF-DETR (medium, COCO people) over 640 px tiles, stitched, then ByteTrack for stable IDs.
+export const WORKFLOW_SPEC = {
+  version: '1.0',
+  inputs: [{ type: 'WorkflowImage', name: 'image' }],
+  steps: [
+    { type: 'roboflow_core/image_slicer@v2', name: 'slicer', image: '$inputs.image', slice_width: 640, slice_height: 640, overlap_ratio_width: 0.15, overlap_ratio_height: 0.15 },
+    { type: 'roboflow_core/roboflow_object_detection_model@v3', name: 'people', images: '$steps.slicer.slices', model_id: 'rfdetr-medium', confidence_mode: 'custom', custom_confidence: 0.3, class_filter: ['person'] },
+    { type: 'roboflow_core/detections_stitch@v1', name: 'stitch', reference_image: '$inputs.image', predictions: '$steps.people.predictions', overlap_filtering_strategy: 'nms', iou_threshold: 0.3 },
+    { type: 'roboflow_core/trackers_bytetrack@v1', name: 'tracker', image: '$inputs.image', detections: '$steps.stitch.predictions', track_activation_threshold: 0.35, high_conf_det_threshold: 0.45, minimum_consecutive_frames: 2, lost_track_buffer: 45 },
+  ],
+  outputs: [{ type: 'JsonField', name: 'people', selector: '$steps.tracker.tracked_detections' }],
+};
+
 // The relay that forwards stream setup to serverless.roboflow.com (Roboflow refuses it straight from a browser).
 // Override with ?proxy=https://... on the camera page for testing.
 export const PROXY_URL = (new URLSearchParams(location.search).get('proxy') || 'https://vis-live-crowd-relay.christopher-0e6.workers.dev').replace(/\/$/, '');

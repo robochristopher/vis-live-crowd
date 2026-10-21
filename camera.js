@@ -2,7 +2,7 @@
 // Streams the camera to the "VIS Live Crowd" Roboflow workflow (RF-DETR + ByteTrack) over WebRTC, maps each
 // person's feet onto the seat map using the four calibration chairs, and sends only those positions to the display.
 import { InferenceHTTPClient, webrtc } from './vendor/inference-sdk-0.4.0.js';
-import { peerIdFor, WORKFLOW_ID, PROXY_URL, CORNERS, UNIT, homography, applyH, store } from './shared.js';
+import { peerIdFor, WORKFLOW_SPEC, PROXY_URL, CORNERS, UNIT, homography, applyH, store } from './shared.js';
 
 const $ = id => document.getElementById(id);
 const vid = $('vid'), ov = $('ov'), octx = ov.getContext('2d'), stateEl = $('state'), hint = $('hint');
@@ -56,7 +56,7 @@ function proxyConnector(key) {
   return {
     connectWrtc: async (offer, p) => {
       const answer = await rfClient(key).initializeWebrtcWorker({
-        offer, workspaceName: p.workspaceName, workflowId: p.workflowId,
+        offer, workflowSpec: p.workflowSpec,
         config: {
           imageInputName: p.imageInputName, streamOutputNames: p.streamOutputNames, dataOutputNames: p.dataOutputNames,
           iceServers: p.iceServers, processingTimeout: p.processingTimeout, requestedPlan: p.requestedPlan,
@@ -134,8 +134,7 @@ async function start() {
       source: mediaStream,
       connector: proxyConnector(apiKey),
       wrtcParams: {
-        workspaceName: ws,
-        workflowId: WORKFLOW_ID,
+        workflowSpec: WORKFLOW_SPEC,
         imageInputName: 'image',
         streamOutputNames: [],
         dataOutputNames: ['people'],
