@@ -1,8 +1,8 @@
 // VIS live crowd: the camera. Runs on the phone on the balcony.
 // Streams the camera to the "VIS Live Crowd" Roboflow workflow (RF-DETR + ByteTrack) over WebRTC, maps each
 // person's feet onto the seat map using the four calibration chairs, and sends only those positions to the display.
-import { InferenceHTTPClient, webrtc } from './vendor/inference-sdk-0.4.0.js?v=6';
-import { peerIdFor, WORKFLOW_SPEC, PROXY_URL, CORNERS, UNIT, homography, applyH, store } from './shared.js?v=6';
+import { InferenceHTTPClient, webrtc } from './vendor/inference-sdk-0.4.0.js?v=7';
+import { peerIdFor, WORKFLOW_SPEC, PROXY_URL, CORNERS, UNIT, homography, applyH, store } from './shared.js?v=7';
 
 const $ = id => document.getElementById(id);
 const vid = $('vid'), ov = $('ov'), octx = ov.getContext('2d'), stateEl = $('state'), hint = $('hint');
@@ -270,11 +270,17 @@ function updateHint() {
   hint.hidden = false;
   const i = activeCorner >= 0 ? activeCorner : null;
   hint.innerHTML = i == null
-    ? 'Drag 1 to 4 onto the <b>outer corner chairs</b>, where each touches the floor. 1 and 2 are the front row, nearest the stage. The map shows which is which.'
+    ? 'Drag the points onto the four <b>outer corner chairs</b>, where each touches the floor. Then use <b>Rotate</b> and <b>Mirror</b> until 1 and 2 are the front row, nearest the stage, matching the map.'
     : `Point <b>${i + 1}</b>: ${CORNERS[i]}`;
 }
+// From a side view the "front left" chair can be anywhere on screen. Rotate moves which point is 1 (the four points
+// stay where they are); Mirror swaps left and right. Keep going until 1 and 2 sit on the front row, nearest the stage.
+function setCorners(next) { const h = homography(next, UNIT); if (!h) return; corners = next; H = h; store.set('vis_cal', corners); updateHint(); }
+$('rotBtn').addEventListener('click', () => setCorners([corners[3], corners[0], corners[1], corners[2]]));
+$('mirBtn').addEventListener('click', () => setCorners([corners[1], corners[0], corners[3], corners[2]]));
 $('calBtn').addEventListener('click', () => {
   calibrating = !calibrating; $('calBtn').setAttribute('aria-pressed', String(calibrating)); activeCorner = -1; updateHint();
+  $('rotBtn').hidden = $('mirBtn').hidden = !calibrating;
   if (calibrating && !mediaStream) previewOnly();
 });
 // show the camera for calibration without starting the cloud stream
@@ -293,7 +299,7 @@ function render() {
   const live = S.stream === 'live';
   stateEl.innerHTML = [
     `<span>code <b>${escapeHtml(code)}</b></span>`,
-    `<span>build <b>6</b></span>`,
+    `<span>build <b>7</b></span>`,
     `<span>stream <b class="${live ? 'live' : ''}">${escapeHtml(S.stream)}</b></span>`,
     `<span>display <b class="${S.link === 'display connected' ? 'live' : 'bad'}">${escapeHtml(S.link)}</b></span>`,
     live ? `<span>people <b>${S.n}</b></span><span>on map <b class="${S.onMap ? 'live' : 'bad'}">${S.onMap ?? 0}</b></span><span><b>${S.fps}</b> fps</span>` : '',

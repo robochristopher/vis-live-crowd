@@ -1,6 +1,6 @@
 // VIS live crowd: the display. Runs fullscreen on the laptop whose HDMI goes to AVT's picture-in-picture.
 // It draws the seat map from the positions the balcony phone sends, and nothing else: no data, empty seats.
-import { peerIdFor, store } from './shared.js?v=6';
+import { peerIdFor, store } from './shared.js?v=7';
 
 const params = new URLSearchParams(location.search);
 const CODE = params.get('code') || store.get('vis_code', 'vis');
@@ -46,9 +46,18 @@ const crowd = (() => {
   const TRAIL = 64, TRAIL_DT = 0.05; // about three seconds of path behind each walker
   let people = [];
   let mode = 'waiting', lastLive = -99;
+  // Walking is judged by real distance over time, never by frame-to-frame speed: detection boxes jitter (chair backs,
+  // partial views), and from a side view a few pixels can be a big jump on the floor. Someone counts as walking once
+  // their smoothed position has travelled about a seat's width within WALK_WINDOW, and stops once it settles.
+  // Units: layout units, where one seat is about 16 wide (about half a metre).
+  const WALK_WINDOW = 1.0, WALK_START = 13, WALK_STOP = 6, SMOOTH_TAU = 0.35;
   function track(p, dt) {
     if ((p.ht += dt) >= TRAIL_DT) { p.ht = 0; p.hist.unshift([p.a, p.b]); if (p.hist.length > TRAIL) p.hist.pop(); }
-    const moving = p.speed > 4;
+    p.trace.push([clock, p.a, p.b]); while (p.trace.length > 2 && clock - p.trace[1][0] > WALK_WINDOW) p.trace.shift();
+    const [, a0, b0] = p.trace[0], travelled = Math.hypot(p.a - a0, p.b - b0);
+    if (!p.walking && travelled > WALK_START) p.walking = true;
+    else if (p.walking && travelled < WALK_STOP) p.walking = false;
+    const moving = p.walking;
     p.moveK += ((moving ? 1 : 0) - p.moveK) * Math.min(1, dt * 3);
     if (!moving) p.hist.splice(-2, 2);
   }
@@ -62,7 +71,8 @@ const crowd = (() => {
       const a = CAL.x0 + u * (CAL.x1 - CAL.x0), b = CAL.y0 + v * (CAL.y1 - CAL.y0);
       if (a < FLOOR.x0 - 20 || a > FLOOR.x1 + 20 || b < FLOOR.y0 - 20 || b > FLOOR.y1 + 20) continue;
       let p = byId.get(id);
-      if (!p) { p = { id, a, b, ta: a, tb: b, hist: [], ht: 0, moveK: 0.6, speed: 0 }; people.push(p); byId.set(id, p); }
+      // new tracks start seated; they only turn lavender once they actually travel
+      if (!p) { p = { id, a, b, ta: a, tb: b, hist: [], ht: 0, moveK: 0, speed: 0, trace: [], walking: false }; people.push(p); byId.set(id, p); }
       p.ta = a; p.tb = b; p.seen = clock;
     }
   }
@@ -74,10 +84,10 @@ const crowd = (() => {
       const p = people[i];
       // someone drops out when newer positions keep arriving without them
       if (lastLive - p.seen > 1.5) { people.splice(i, 1); continue; }
-      // positions arrive a few times a second: glide toward each one so walkers move smoothly
-      const k = Math.min(1, dt * 7), na = p.a + (p.ta - p.a) * k, nb = p.b + (p.tb - p.b) * k;
-      const sp = Math.hypot(na - p.a, nb - p.b) / Math.max(dt, 1e-3);
-      p.speed += (sp - p.speed) * Math.min(1, dt * 5); p.a = na; p.b = nb;
+      // positions arrive a few times a second: ease toward each one (about a third of a second), which smooths both
+      // the walkers' paths and the jitter of people sitting still
+      const k = 1 - Math.exp(-dt / SMOOTH_TAU);
+      p.a += (p.ta - p.a) * k; p.b += (p.tb - p.b) * k;
       track(p, dt);
     }
     for (const p of people) splat(p.a, p.b, 1.1 - 0.85 * p.moveK, 5.5);
@@ -122,7 +132,7 @@ const crowd = (() => {
     }
   }
   function reset() { people = []; heat.fill(0); }
-  return { step, sample, drawDots, ingest, reset, get count() { return people.length; }, get mode() { return mode; }, get lastLive() { return lastLive; } };
+  return { _people: () => { const w = people.filter(p => p.walking).map(p => p.id); return { total: people.length, walking: w }; }, step, sample, drawDots, ingest, reset, get count() { return people.length; }, get mode() { return mode; }, get lastLive() { return lastLive; } };
 })();
 
 // ---------------------------------------------------------------- picture: sharpens as the room fills
