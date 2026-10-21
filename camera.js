@@ -1,8 +1,8 @@
 // VIS live crowd: the camera. Runs on the phone on the balcony.
 // Streams the camera to the "VIS Live Crowd" Roboflow workflow (RF-DETR + ByteTrack) over WebRTC, maps each
 // person's feet onto the seat map using the four calibration chairs, and sends only those positions to the display.
-import { InferenceHTTPClient, webrtc } from './vendor/inference-sdk-0.4.0.js?v=7';
-import { peerIdFor, WORKFLOW_SPEC, PROXY_URL, CORNERS, UNIT, homography, applyH, store } from './shared.js?v=7';
+import { InferenceHTTPClient, webrtc } from './vendor/inference-sdk-0.4.0.js?v=8';
+import { peerIdFor, WORKFLOW_SPEC, PROXY_URL, CORNERS, UNIT, homography, applyH, store } from './shared.js?v=8';
 
 const $ = id => document.getElementById(id);
 const vid = $('vid'), ov = $('ov'), octx = ov.getContext('2d'), stateEl = $('state'), hint = $('hint');
@@ -192,8 +192,9 @@ function onData(data) {
   const iw = out.image?.width || vid.videoWidth || 1, ih = out.image?.height || vid.videoHeight || 1;
   const preds = (out.predictions || []).filter(p => p.tracker_id != null && p.tracker_id >= 0);
   S.n = preds.length;
-  // each person's feet: bottom-center of the box, normalized to the frame, then onto the seat map
-  lastPeople = preds.map(p => ({ id: p.tracker_id, fx: p.x / iw, fy: (p.y + p.height / 2) / ih }));
+  // each person's position: the center of their box (Roboflow's x, y). From the balcony, looking down, the center is
+  // steadier than the bottom edge, which chair backs keep cutting off. Normalized to the frame, then onto the seat map.
+  lastPeople = preds.map(p => ({ id: p.tracker_id, fx: p.x / iw, fy: p.y / ih }));
   const list = H ? lastPeople.map(({ id, fx, fy }) => { const [u, v] = applyH(H, fx, fy); return [id, Math.round(u * 1e4) / 1e4, Math.round(v * 1e4) / 1e4]; }) : [];
   // how many land on the seat map (the display keeps the floor around the calibrated chairs: about half a block either side)
   S.onMap = list.filter(([, u, v]) => u > -0.5 && u < 1.4 && v > -0.45 && v < 1.8).length;
@@ -270,7 +271,7 @@ function updateHint() {
   hint.hidden = false;
   const i = activeCorner >= 0 ? activeCorner : null;
   hint.innerHTML = i == null
-    ? 'Drag the points onto the four <b>outer corner chairs</b>, where each touches the floor. Then use <b>Rotate</b> and <b>Mirror</b> until 1 and 2 are the front row, nearest the stage, matching the map.'
+    ? 'Drag the points onto the <b>seats</b> of the four outer corner chairs (where a seated person\'s middle would be). Then use <b>Rotate</b> and <b>Mirror</b> until 1 and 2 are the front row, nearest the stage, matching the map.'
     : `Point <b>${i + 1}</b>: ${CORNERS[i]}`;
 }
 // From a side view the "front left" chair can be anywhere on screen. Rotate moves which point is 1 (the four points
@@ -299,7 +300,7 @@ function render() {
   const live = S.stream === 'live';
   stateEl.innerHTML = [
     `<span>code <b>${escapeHtml(code)}</b></span>`,
-    `<span>build <b>7</b></span>`,
+    `<span>build <b>8</b></span>`,
     `<span>stream <b class="${live ? 'live' : ''}">${escapeHtml(S.stream)}</b></span>`,
     `<span>display <b class="${S.link === 'display connected' ? 'live' : 'bad'}">${escapeHtml(S.link)}</b></span>`,
     live ? `<span>people <b>${S.n}</b></span><span>on map <b class="${S.onMap ? 'live' : 'bad'}">${S.onMap ?? 0}</b></span><span><b>${S.fps}</b> fps</span>` : '',
