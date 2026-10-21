@@ -1,6 +1,6 @@
 // VIS live crowd: the display. Runs fullscreen on the laptop whose HDMI goes to AVT's picture-in-picture.
 // It draws the seat map from the positions the balcony phone sends, and nothing else: no data, empty seats.
-import { peerIdFor, store } from './shared.js?v=10';
+import { peerIdFor, store } from './shared.js?v=11';
 
 const params = new URLSearchParams(location.search);
 const CODE = params.get('code') || store.get('vis_code', 'vis');

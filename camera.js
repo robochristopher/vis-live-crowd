@@ -1,8 +1,8 @@
 // VIS live crowd: the camera. Runs on the phone on the balcony.
 // Streams the camera to the "VIS Live Crowd" Roboflow workflow (RF-DETR + ByteTrack) over WebRTC, maps each
 // person's feet onto the seat map using the four calibration chairs, and sends only those positions to the display.
-import { InferenceHTTPClient, webrtc } from './vendor/inference-sdk-0.4.0.js?v=10';
-import { peerIdFor, WORKFLOW_SPEC, PROXY_URL, CORNERS, UNIT, homography, applyH, store } from './shared.js?v=10';
+import { InferenceHTTPClient, webrtc } from './vendor/inference-sdk-0.4.0.js?v=11';
+import { peerIdFor, WORKFLOW_SPEC, PROXY_URL, CORNERS, UNIT, homography, applyH, store } from './shared.js?v=11';
 
 const $ = id => document.getElementById(id);
 const vid = $('vid'), ov = $('ov'), octx = ov.getContext('2d'), stateEl = $('state'), hint = $('hint');
@@ -311,14 +311,7 @@ function moveCorner(e) {
   if (h) { corners = next; H = h; }
   updateHint();
 }
-function updateHint() {
-  if (!calibrating) { hint.hidden = true; return; }
-  hint.hidden = false;
-  const i = activeCorner >= 0 ? activeCorner : null;
-  hint.innerHTML = i == null
-    ? 'Tap <b>Balcony view</b> first. Then fine-tune: 2 and 3 on the near ends of the front and back rows, 1 and 4 further along those same rows. Tap <b>Square up</b> after dragging so the grid stays a true rectangle. The slanted grid lines should follow the rows of chairs.'
-    : `Point <b>${i + 1}</b>: ${CORNERS[i]}`;
-}
+function updateHint() { hint.hidden = true; } // no instruction text over the camera view
 // From a side view the "front left" chair can be anywhere on screen. Rotate moves which point is 1 (the four points
 // stay where they are); Mirror swaps left and right. Keep going until 1 and 2 sit on the front row, nearest the stage.
 // The balcony view (stage-left balcony, stage off to the right of the frame), measured from Peter's photo of Oct 21.
@@ -368,7 +361,7 @@ function render() {
   const live = S.stream === 'live';
   stateEl.innerHTML = [
     `<span>code <b>${escapeHtml(code)}</b></span>`,
-    `<span>build <b>10</b></span>`,
+    `<span>build <b>11</b></span>`,
     `<span>stream <b class="${live ? 'live' : ''}">${escapeHtml(S.stream)}</b></span>`,
     `<span>display <b class="${S.link === 'display connected' ? 'live' : 'bad'}">${escapeHtml(S.link)}</b></span>`,
     live ? `<span>people <b>${S.n}</b></span><span>on map <b class="${S.onMap ? 'live' : 'bad'}">${S.onMap ?? 0}</b></span><span><b>${S.fps}</b> fps</span>` : '',
