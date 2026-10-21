@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#121110">
+<title>VIS Live Crowd · Camera</title>
+<style>
+  :root { color-scheme: dark; --ink: #121110; --panel: #1a1917; --ivory: #f4f2ec; --muted: #8f8b85; --lav: #c29af6; --line: #2b2927; --bad: #ff8a7a; --mono: ui-monospace, Menlo, monospace; }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; height: 100%; background: var(--ink); color: var(--ivory); font: 14px/1.45 var(--mono); }
+  body { display: grid; grid-template-rows: 1fr auto; height: 100dvh; padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
+  #view { position: relative; min-height: 0; background: #000; touch-action: none; }
+  #view video, #view canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+  #hint { position: absolute; left: 12px; right: 12px; top: 12px; padding: 10px 12px; background: rgba(18,17,16,.9); border: 1px solid var(--line); font-size: 13px; }
+  #hint b { color: var(--lav); font-weight: 500; }
+  #bar { background: var(--panel); border-top: 1px solid var(--line); padding: 12px max(12px, env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); display: grid; gap: 10px; }
+  #state { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--muted); font-size: 13px; }
+  #state b { color: var(--ivory); font-weight: 500; }
+  #state .live { color: var(--lav); }
+  #state .bad { color: var(--bad); }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; }
+  button, input { font: 500 13px var(--mono); color: var(--ivory); background: transparent; border: 1px solid var(--line); padding: 11px 14px; border-radius: 0; }
+  button { letter-spacing: .06em; text-transform: uppercase; cursor: pointer; }
+  button.primary { background: var(--lav); border-color: var(--lav); color: var(--ink); }
+  button[aria-pressed="true"] { border-color: var(--lav); color: var(--lav); }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--lav); outline-offset: 2px; }
+  #setup { position: fixed; inset: 0; background: var(--ink); display: grid; place-items: center; padding: 20px; z-index: 5; }
+  #setup form { width: min(440px, 100%); display: grid; gap: 12px; }
+  #setup h1 { font-size: 16px; font-weight: 500; margin: 0 0 4px; }
+  #setup p { color: var(--muted); margin: 0; font-size: 13px; }
+  #setup label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
+  #setup input { width: 100%; text-transform: none; letter-spacing: 0; }
+  #setup .err { color: var(--bad); min-height: 1.4em; }
+</style>
+</head>
+<body>
+<div id="view">
+  <video id="vid" playsinline muted autoplay></video>
+  <canvas id="ov"></canvas>
+  <div id="hint" hidden></div>
+</div>
+<div id="bar">
+  <div id="state"></div>
+  <div class="row">
+    <button type="button" class="primary" id="startBtn">Start</button>
+    <button type="button" id="calBtn" aria-pressed="false">Calibrate</button>
+    <button type="button" id="fileBtn">Test with a video</button>
+    <button type="button" id="setBtn">Settings</button>
+  </div>
+  <input type="file" id="file" accept="video/*" hidden>
+</div>
+
+<div id="setup" hidden>
+  <form id="setupForm">
+    <h1>VIS live crowd · camera</h1>
+    <p>This phone streams the room to Roboflow and sends only positions to the display laptop. Nothing is recorded.</p>
+    <label>Show code (same as the display)
+      <input id="codeIn" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+    </label>
+    <label>Roboflow API key
+      <input id="keyIn" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+    </label>
+    <p>The key stays on this phone only. Find it at app.roboflow.com, Settings, API Keys.</p>
+    <div class="err" id="setupErr"></div>
+    <div class="row"><button type="submit" class="primary">Save</button></div>
+  </form>
+</div>
+
+<script src="vendor/peerjs-1.5.4.min.js"></script>
+<script type="module" src="camera.js"></script>
+</body>
+</html>

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#121110">
+<title>VIS Live Crowd</title>
+<style>
+  :root { color-scheme: dark; --ink: #121110; --ivory: #f4f2ec; --muted: #8f8b85; --lav: #c29af6; --line: #2b2927; --mono: ui-monospace, Menlo, monospace; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--ink); color: var(--ivory); font: 15px/1.55 var(--mono); }
+  main { max-width: 640px; margin: 0 auto; padding: 40px max(20px, env(safe-area-inset-right)) 48px max(20px, env(safe-area-inset-left)); display: grid; gap: 28px; }
+  h1 { font-size: 18px; font-weight: 500; margin: 0; letter-spacing: .02em; }
+  p { margin: 0; color: var(--muted); }
+  .pick { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+  a.card { display: grid; gap: 6px; padding: 18px; border: 1px solid var(--line); color: var(--ivory); text-decoration: none; }
+  a.card:hover, a.card:focus-visible { border-color: var(--lav); outline: none; }
+  a.card b { font-weight: 500; color: var(--lav); text-transform: uppercase; letter-spacing: .08em; font-size: 13px; }
+  ol { margin: 0; padding-left: 20px; color: var(--muted); display: grid; gap: 6px; }
+  ol b { color: var(--ivory); font-weight: 500; }
+  label { display: grid; gap: 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  input { font: 15px var(--mono); color: var(--ivory); background: transparent; border: 1px solid var(--line); padding: 10px 12px; width: min(260px, 100%); }
+  input:focus-visible { outline: 2px solid var(--lav); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<main>
+  <div>
+    <h1>VIS live crowd</h1>
+    <p>A phone on the balcony watches the room. Roboflow finds and tracks each person, and the display draws the seat map filling up. Only positions leave the phone; no video is recorded or shown.</p>
+  </div>
+  <label>Show code
+    <input id="code" value="vis" autocomplete="off" autocapitalize="none" spellcheck="false">
+  </label>
+  <div class="pick">
+    <a class="card" id="cam" href="camera.html"><b>Camera</b><span>Open on the phone on the balcony.</span></a>
+    <a class="card" id="disp" href="display.html"><b>Display</b><span>Open on the laptop going to AVT, then fullscreen.</span></a>
+  </div>
+  <ol>
+    <li>Put the phone and the laptop on the <b>same Wi-Fi</b>.</li>
+    <li>Open <b>Display</b> on the laptop and press F for fullscreen.</li>
+    <li>Open <b>Camera</b> on the phone, enter the Roboflow API key once, then tap Calibrate and drag the four points onto the outer chairs.</li>
+    <li>Tap <b>Start</b>. The phone shows people and fps; the display switches from simulated to live within a few seconds.</li>
+    <li>If live positions stop, the display keeps going on its own. Press S on the laptop to see status.</li>
+  </ol>
+</main>
+<script>
+  const code = document.getElementById('code');
+  try { code.value = JSON.parse(localStorage.getItem('vis_code')) || 'vis'; } catch {}
+  const sync = () => {
+    const c = encodeURIComponent(code.value.trim() || 'vis');
+    document.getElementById('cam').href = `camera.html?code=${c}`;
+    document.getElementById('disp').href = `display.html?code=${c}`;
+    try { localStorage.setItem('vis_code', JSON.stringify(code.value.trim() || 'vis')); } catch {}
+  };
+  code.addEventListener('input', sync); sync();
+</script>
+</body>
+</html>
