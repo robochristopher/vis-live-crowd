@@ -1,8 +1,8 @@
 // VIS live crowd: the camera. Runs on the phone on the balcony.
 // Streams the camera to the "VIS Live Crowd" Roboflow workflow (RF-DETR + ByteTrack) over WebRTC, maps each
 // person's feet onto the seat map using the four calibration chairs, and sends only those positions to the display.
-import { InferenceHTTPClient, webrtc } from './vendor/inference-sdk-0.4.0.js';
-import { peerIdFor, WORKFLOW_SPEC, PROXY_URL, CORNERS, UNIT, homography, applyH, store } from './shared.js';
+import { InferenceHTTPClient, webrtc } from './vendor/inference-sdk-0.4.0.js?v=5';
+import { peerIdFor, WORKFLOW_SPEC, PROXY_URL, CORNERS, UNIT, homography, applyH, store } from './shared.js?v=5';
 
 const $ = id => document.getElementById(id);
 const vid = $('vid'), ov = $('ov'), octx = ov.getContext('2d'), stateEl = $('state'), hint = $('hint');
@@ -291,6 +291,7 @@ function render() {
   const live = S.stream === 'live';
   stateEl.innerHTML = [
     `<span>code <b>${escapeHtml(code)}</b></span>`,
+    `<span>build <b>5</b></span>`,
     `<span>stream <b class="${live ? 'live' : ''}">${escapeHtml(S.stream)}</b></span>`,
     `<span>display <b class="${S.link === 'display connected' ? 'live' : 'bad'}">${escapeHtml(S.link)}</b></span>`,
     live ? `<span>people <b>${S.n}</b></span><span><b>${S.fps}</b> fps</span>` : '',
